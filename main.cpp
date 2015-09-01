@@ -1,6 +1,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
+#include <cstring>
+#include <ctime>
 #include <algorithm>
 #include <ctype.h>
 #include <buspirate.h>
@@ -235,8 +237,19 @@ int main(int argc, char **argv)
     printf("Bus Pirate opened\n");
 
     unsigned char version;
-    if (bp_bin_mode_spi(bp, &version) != BP_SUCCESS)
-        return -1;
+    if (bp_bin_init(bp, &version) != BP_SUCCESS) {
+	fprintf(stderr, "Could not enter binary mode\n");
+        bp_close(bp);
+        exit(EXIT_FAILURE);
+    }
+    printf("Binary mode version: %u\n", version);
+
+    if (bp_bin_mode_spi(bp, &version) != BP_SUCCESS) {
+        fprintf(stderr, "failed to set SPI mode\n");
+        bp_bin_reset(bp, &version);
+        bp_close(bp);
+        exit(EXIT_FAILURE);
+    }
     printf("Binary I/O SPI version: %u\n", version);
 
     unsigned char speed= BP_BIN_SPI_SPEED_30K;

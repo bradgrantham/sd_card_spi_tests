@@ -1,2 +1,5 @@
 CXXFLAGS=-Wall -I/usr/local/include/buspirate
-LDFLAGS=-L/usr/local/lib -lbuspirate
+LDFLAGS=-L/usr/local/lib 
+LDLIBS= -lbuspirate
+
+all: main

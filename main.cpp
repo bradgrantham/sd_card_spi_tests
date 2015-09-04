@@ -44,6 +44,8 @@ unsigned char crc7_generate_bytes(unsigned char *b, int count)
     return crc;
 }
 
+bool debug = false;
+
 // cribbed somewhat from http://elm-chan.org/docs/mmc/mmc_e.html
 enum sdcard_command {
     CMD0 = 0,    // init; go to idle state
@@ -54,8 +56,8 @@ enum sdcard_command {
     ACMD41 = 41, // application command to send operating condition
 };
 const unsigned int sdcard_response_IDLE = 0x01;
-const unsigned int sdcard_response_READY = 0x00;
-const unsigned int sdcard_token_17_18_24 = 0xfe;
+const unsigned int sdcard_response_SUCCESS = 0x00;
+const unsigned int sdcard_token_17_18_24 = 0xFE;
 
 const int CS_ENABLE = 0;
 const int CS_DISABLE = 1;
@@ -65,15 +67,17 @@ const int CS_DISABLE = 1;
 // writes >= 7 bytes.  So just send bulk transfers in parts.  I was going to
 // have to do that anyway for read and write block, so no biggie.
 //
-int brad_bp_bin_spi_bulk(BP* bp, unsigned char *buffer, unsigned char nlen)
+int brad_bp_bin_spi_bulk(BP* bp, unsigned char *buffer, unsigned int nlen)
 {
     while(nlen > 0) {
-        unsigned char count = std::min(nlen, (unsigned char)6);
-        printf("send %d now:", count);
-        for(int i = 0; i < nlen; i++) {
-            printf(" %02X", buffer[i]);
+        unsigned char count = std::min(nlen, 6U);
+        if(debug) {
+            printf("send %d now:", count);
+            for(int i = 0; i < count; i++) {
+                printf(" %02X", buffer[i]);
+            }
+            printf("\n");
         }
-        printf("\n");
         if (bp_bin_spi_bulk(bp, buffer, count) != BP_SUCCESS) {
             fprintf(stderr, "brad_bp_bin_spi_bulk: failed to bp_bin_spi_bulk\n");
             return BP_FAILURE;
@@ -101,7 +105,7 @@ bool bp_spi_sdcard_command(BP* bp, sdcard_command command, unsigned int paramete
     command_buffer[4] = (parameter >> 0) & 0xff;
     command_buffer[5] = ((crc7_generate_bytes(command_buffer, 5) & 0x7f) << 1) | 0x01;
 
-    printf("command constructed: %02X %02X %02X %02X %02X %02X\n",
+    if(debug) printf("command constructed: %02X %02X %02X %02X %02X %02X\n",
         command_buffer[0], command_buffer[1], command_buffer[2],
         command_buffer[3], command_buffer[4], command_buffer[5]);
 
@@ -110,7 +114,7 @@ bool bp_spi_sdcard_command(BP* bp, sdcard_command command, unsigned int paramete
         bp_bin_spi_cs(bp, CS_DISABLE);
         return false;
     }
-    printf("returned in buffer: %02X %02X %02X %02X %02X %02X\n",
+    if(debug) printf("returned in buffer: %02X %02X %02X %02X %02X %02X\n",
         command_buffer[0], command_buffer[1], command_buffer[2],
         command_buffer[3], command_buffer[4], command_buffer[5]);
 
@@ -118,7 +122,7 @@ bool bp_spi_sdcard_command(BP* bp, sdcard_command command, unsigned int paramete
     time_t time_was = time(NULL);
     do {
         time_t time_now = time(NULL);
-        if(time_now - time_was > 5) {
+        if(time_now - time_was > 1) {
             fprintf(stderr, "bp_spi_sdcard_command: timed out waiting on response\n");
             bp_bin_spi_cs(bp, CS_DISABLE);
             return false;
@@ -128,8 +132,8 @@ bool bp_spi_sdcard_command(BP* bp, sdcard_command command, unsigned int paramete
             bp_bin_spi_cs(bp, CS_DISABLE);
             return false;
         }
-        printf("response 0x%02X\n", response[0]);
-    } while(response[0] == 0xff);
+        if(debug) printf("response 0x%02X\n", response[0]);
+    } while(response[0] & 0x80);
 
     if(response_length > 1) {
         if (brad_bp_bin_spi_bulk(bp, response + 1, response_length - 1) != BP_SUCCESS) {
@@ -201,9 +205,10 @@ bool bp_spi_sdcard_init(BP* bp)
         }
         if(!bp_spi_sdcard_command(bp, ACMD41, 0x40000000, response, 8))
             return false;
-    } while(response[0] != sdcard_response_READY);
-    printf("returned from ACMD41: %02X %02X %02X %02X %02X %02X %02X %02X\n",
-        response[0], response[1], response[2], response[3], response[4], response[5], response[6], response[7]);
+    } while(response[0] != sdcard_response_SUCCESS);
+    if(debug) printf("returned from ACMD41: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+        response[0], response[1], response[2], response[3],
+        response[4], response[5], response[6], response[7]);
 
     return true;
 }
@@ -212,30 +217,140 @@ const unsigned int block_size = 512;
 
 bool bp_spi_sdcard_readblock(BP *bp, unsigned int blocknum, unsigned char *block)
 {
-    unsigned char response[block_size + 4];
+    unsigned char response[8];
 
-    /* read block */
-    if(!bp_spi_sdcard_command(bp, CMD17, blocknum, response, sizeof(response)))
+    response[0] = 0xff;
+    if(!bp_spi_sdcard_command(bp, CMD17, blocknum, response, 1))
         return false;
-    // if(response[0] != sdcard_response_SUCCESS) {
-        // fprintf(stderr, "bp_spi_sdcard_init: failed to respond with READ token, response was 0x%02X\n", response[0]);
-        // return false;
-    // }
-    fprintf(stderr, "read coomand response was 0x%02X\n", response[0]);
-    if(response[1] != sdcard_token_17_18_24) {
-        fprintf(stderr, "bp_spi_sdcard_init: failed to respond with READ token, response was 0x%02X\n", response[0]);
+    if(response[0] != sdcard_response_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to respond with SUCCESS, response was 0x%02X\n", response[0]);
         return false;
     }
+    if(bp_bin_spi_cs(bp, CS_ENABLE) < 0) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to enable CS\n");
+        return false;
+    }
+
+    response[0] = 0xff;
+    time_t time_was = time(NULL);
+    do {
+        time_t time_now = time(NULL);
+        if(time_now - time_was > 1) {
+            fprintf(stderr, "bp_spi_sdcard_readblock: timed out waiting on response\n");
+            bp_bin_spi_cs(bp, CS_DISABLE);
+            return false;
+        }
+        if (brad_bp_bin_spi_bulk(bp, response, 1) != BP_SUCCESS) {
+            fprintf(stderr, "bp_spi_sdcard_readblock: failed to read response byte 0\n");
+            bp_bin_spi_cs(bp, CS_DISABLE);
+            return false;
+        }
+        if(debug) printf("readblock response 0x%02X\n", response[0]);
+    } while(response[0] != sdcard_token_17_18_24);
+
+    if (brad_bp_bin_spi_bulk(bp, block, block_size) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to read block\n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+    memset(response, 0xff, 2);
+    if (brad_bp_bin_spi_bulk(bp, response, 2) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to read CRC\n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+    if(debug) printf("CRC is 0x%02X%02X\n", response[0], response[1]);
     // discard CRC
-    memcpy(block, response + 2, block_size);
+
+    memset(response, 0xff, sizeof(response));
+    if (brad_bp_bin_spi_bulk(bp, response, sizeof(response)) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to get trailing results \n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+    if(debug) printf("trailing read: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+        response[0], response[1], response[2], response[3],
+        response[4], response[5], response[6], response[7]);
+
+
+    if(bp_bin_spi_cs(bp, CS_DISABLE) < 0) {
+        fprintf(stderr, "bp_spi_sdcard_readblock: failed to clear CS\n");
+        return false;
+    }
 
     return true;
 }
 
 bool bp_spi_sdcard_writeblock(BP *bp, unsigned int blocknum, unsigned char block[512])
 {
-    /* CMD24, address is MSB first */
-    /* R1 response */
+    unsigned char response[8];
+    unsigned char blockcopy[block_size];
+
+    memset(response, 0xff, sizeof(response));
+    if(!bp_spi_sdcard_command(bp, CMD24, blocknum, response, 1))
+        return false;
+    if(response[0] != sdcard_response_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to respond with SUCCESS, response was 0x%02X\n", response[0]);
+        return false;
+    }
+    if(bp_bin_spi_cs(bp, CS_ENABLE) < 0) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to enable CS\n");
+        return false;
+    }
+
+    response[0] = sdcard_token_17_18_24;
+    if (brad_bp_bin_spi_bulk(bp, response, 1) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to write one byte preceeding write\n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+
+    memcpy(blockcopy, block, block_size);
+    if (brad_bp_bin_spi_bulk(bp, blockcopy, block_size) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to write block data\n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+
+    // junk CRC
+    memset(response, 0xff, sizeof(response));
+    if (brad_bp_bin_spi_bulk(bp, response, 2) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to write block CRC\n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+
+    time_t time_was = time(NULL);
+    do {
+        time_t time_now = time(NULL);
+        if(time_now - time_was > 1) {
+            fprintf(stderr, "bp_spi_sdcard_writeblock: timed out waiting on response\n");
+            bp_bin_spi_cs(bp, CS_DISABLE);
+            return false;
+        }
+        if (brad_bp_bin_spi_bulk(bp, response, 1) != BP_SUCCESS) {
+            fprintf(stderr, "bp_spi_sdcard_writeblock: failed to read response byte 0\n");
+            bp_bin_spi_cs(bp, CS_DISABLE);
+            return false;
+        }
+        if(debug) printf("writeblock response 0x%02X\n", response[0]);
+    } while(response[0] == 0);
+
+    memset(response, 0xff, sizeof(response));
+    if (brad_bp_bin_spi_bulk(bp, response, sizeof(response)) != BP_SUCCESS) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to get trailing results \n");
+        bp_bin_spi_cs(bp, CS_DISABLE);
+        return false;
+    }
+    if(debug) printf("trailing write: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+        response[0], response[1], response[2], response[3],
+        response[4], response[5], response[6], response[7]);
+
+    if(bp_bin_spi_cs(bp, CS_DISABLE) < 0) {
+        fprintf(stderr, "bp_spi_sdcard_writeblock: failed to clear CS\n");
+        return false;
+    }
+
     return true;
 }
 
@@ -277,6 +392,7 @@ void show_spi_config(unsigned char config)
 
 int main(int argc, char **argv)
 {
+    bool successful = true;
     if(argc < 2) {
         fprintf(stderr, "usage: %s devicename\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -348,6 +464,7 @@ int main(int argc, char **argv)
         bp_close(bp);
         exit(EXIT_FAILURE);
     }
+    printf("SD Card interface is initialized for SPI\n");
 
     unsigned char originalblock[512];
     unsigned char junkblock[512];
@@ -357,12 +474,11 @@ int main(int argc, char **argv)
     printf("original block:\n");
     dump_buffer_hex(4, originalblock, 512);
 
-    exit(0);
-
     for(int i = 0; i < 512; i++)
         junkblock[i] = i % 256;
 
     bp_spi_sdcard_writeblock(bp, 0, junkblock);
+    printf("Wrote junk block\n");
 
     bp_spi_sdcard_readblock(bp, 0, blockread);
     if(memcmp(blockread, junkblock, sizeof(junkblock)) != 0) {
@@ -371,15 +487,27 @@ int main(int argc, char **argv)
         dump_buffer_hex(4, junkblock, 512);
         printf("junk I got back:\n");
         dump_buffer_hex(4, blockread, 512);
+        successful = false;
+    } else {
+        printf("Verified junk block was written\n");
     }
 
     bp_spi_sdcard_writeblock(bp, 0, originalblock);
+    printf("Wrote original block\n");
 
     bp_spi_sdcard_readblock(bp, 0, blockread);
     if(memcmp(blockread, originalblock, sizeof(originalblock)) != 0) {
         printf("whoops, error verifying write of original to block 0\n");
         printf("block I got back:\n");
         dump_buffer_hex(4, blockread, 512);
+        successful = false;
+    } else {
+        printf("Verified original block was written\n");
+    }
+    if(successful) {
+        printf("Success!\n");
+    } else {
+        printf("There were problems.\n");
     }
 
     bp_bin_reset(bp, &version);

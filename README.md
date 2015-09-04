@@ -3,6 +3,10 @@
 This program uses libbuspirate (http://sourceforge.net/projects/libbuspirate/)
 to operate a Bus Pirate (http://dangerousprototypes.com/docs/Bus_Pirate) in SPI mode to connect with an SD memory card in SPI mode and read and write blocks.
 
+Notably, either libbuspirate or Bus Pirate's binary mode wouldn't receive any bulk SPI operations larger than 6 bytes.  So I broke them up in a utility function. 
+
+It's *really* slow.  I don't know if that's the SPI clock or if it's the BusPirate protocol or a combination of all of the above...
+
 Some references:
 
 * http://elm-chan.org/docs/mmc/mmc_e.html

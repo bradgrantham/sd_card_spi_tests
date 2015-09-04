@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstring>
 #include <ctime>
+#include <sys/time.h>
 #include <algorithm>
 #include <ctype.h>
 #include <buspirate.h>
@@ -421,7 +422,12 @@ int main(int argc, char **argv)
     }
     printf("Binary I/O SPI version: %u\n", version);
 
-    unsigned char speed= BP_BIN_SPI_SPEED_30K;
+    unsigned char speed= BP_BIN_SPI_SPEED_1M;
+// #define BP_BIN_SPI_SPEED_30K  0
+// #define BP_BIN_SPI_SPEED_125K 1
+// #define BP_BIN_SPI_SPEED_250K 2
+// #define BP_BIN_SPI_SPEED_1M   3
+// #define BP_BIN_SPI_SPEED_2M   4
     /* Note: SPI speed >= 2.6MHz do not work due to issues
          within the BP firmware (checked with version 5.10) */
     printf("Select SPI speed : %s\n", BP_BIN_SPI_SPEEDS[speed]);
@@ -504,11 +510,23 @@ int main(int argc, char **argv)
     } else {
         printf("Verified original block was written\n");
     }
+
     if(successful) {
-        printf("Success!\n");
+        printf("Functionality: Success!\n");
     } else {
-        printf("There were problems.\n");
+        printf("Functionality: There were problems.\n");
     }
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    double time_then = tv.tv_sec + tv.tv_usec / 1000000.0;
+    const int block_count = 10;
+    for(unsigned int i = 0; i < block_count; i++) {
+        bp_spi_sdcard_readblock(bp, i, blockread);
+    }
+    gettimeofday(&tv, NULL);
+    double time_now = tv.tv_sec + tv.tv_usec / 1000000.0;
+    printf("Speed test: Read %d blocks in %f seconds, %f KB/sec\n", block_count, time_now - time_then, block_count * block_size / 1000.0 / (time_now - time_then));
 
     bp_bin_reset(bp, &version);
     bp_close(bp);

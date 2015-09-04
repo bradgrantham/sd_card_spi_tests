@@ -5,7 +5,7 @@ to operate a Bus Pirate (http://dangerousprototypes.com/docs/Bus_Pirate) in SPI 
 
 Notably, either libbuspirate or Bus Pirate's binary mode wouldn't receive any bulk SPI operations larger than 6 bytes.  So I broke them up in a utility function. 
 
-It's *really* slow.  I don't know if that's the SPI clock or if it's the BusPirate protocol or a combination of all of the above...
+It's *really* slow.  I think it's the serial port, as changing the SPI clock doesn't change anything.  There looks to be a way to load the FTDI serial driver with baud rates higher than 115200, but libbuspirate opens the serial port as 115200 baud, so without a library change this sample won't go any faster.
 
 I used this setup, basically wiring the Bus Pirate directly to the SD Card.  I used the pullup mode of the Bus Pirate.  The SD card is actually a microSD adapter (so I didn't solder directly to a real SD card) and I've tested only against a SanDisk 4GB MicroSDHC.
 

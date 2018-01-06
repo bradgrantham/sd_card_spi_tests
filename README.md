@@ -9,6 +9,13 @@ It's *really* slow.  I think it's the serial port, as changing the SPI clock doe
 
 I used this setup, basically wiring the Bus Pirate directly to the SD Card.  I used the pullup mode of the Bus Pirate.  The SD card is actually a microSD adapter (so I didn't solder directly to a real SD card) and I've tested only against a SanDisk 4GB MicroSDHC.
 
+## To Build
+
+Requirements: libbuspirate
+OS: MacOS or Linux
+
+    make
+
 ## This is a potentially destructive sample!  Only test it on SD cards you don't mind destroying.
 
 ![Testing Setup](https://raw.githubusercontent.com/bradgrantham/sd_card_spi_tests/master/buspirate-sdcard.jpg)
